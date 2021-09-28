@@ -8,6 +8,29 @@
 namespace uvpp
 {
 
+  template <typename T>
+  class ObjPool
+  {
+  public:
+    auto acquire()
+    {
+      if (freeObjs.empty())
+        return new T;
+      auto ret = freeObjs.back();
+      freeObjs.pop_back();
+      return ret;
+    }
+    auto release(T *obj) { freeObjs.push_back(obj); }
+    ~ObjPool()
+    {
+      for (auto obj : freeObjs)
+        delete (obj);
+    }
+
+  private:
+    std::vector<T *> freeObjs;
+  };
+
 #define UVPP_DECL_METHOD(name, uv_name)                      \
   template <typename... Args>                                \
   auto name(Args &&...args)                                  \
@@ -77,13 +100,13 @@ namespace uvpp
     auto shutdown(ShutdownCb cb)
     {
       assert(!shutdownCb);
-      auto tmp = new uv_shutdown_t;
+      auto tmp = shutdownPool.acquire();
       shutdownCb = std::move(cb);
       return uv_shutdown(tmp, get(), [](uv_shutdown_t *req, int status) {
         auto self = static_cast<Stream *>(Stream{req->handle}.getData());
         auto cb = std::move(self->shutdownCb);
         self->shutdownCb = nullptr;
-        delete req;
+        self->shutdownPool.release(req);
         cb(status);
       });
     }
@@ -118,21 +141,22 @@ namespace uvpp
     struct WriteReq
     {
       uv_write_t req;
-      std::vector<uv_buf_t> bufs;
+      std::basic_string<uv_buf_t> bufs;
       WriteCb cb;
     };
 
-    auto write(std::vector<uv_buf_t> bufs, WriteCb cb)
+    auto write(std::basic_string<uv_buf_t> bufs, WriteCb cb)
     {
-      auto req = std::make_unique<WriteReq>();
-      auto pReq = req.get();
+      auto pReq = writePool.acquire();
       pReq->bufs = std::move(bufs);
       pReq->cb = std::move(cb);
-      writeReqs[&pReq->req] = std::move(req);
+      writeReqs[&pReq->req] = pReq;
       uv_write(&pReq->req, get(), pReq->bufs.data(), pReq->bufs.size(), [](uv_write_t *req, int status) {
         auto self = static_cast<Stream *>(req->handle->data);
-        auto cb = std::move(self->writeReqs[req]->cb);
+        auto pReq = self->writeReqs[req];
+        auto cb = std::move(pReq->cb);
         self->writeReqs.erase(req);
+        self->writePool.release(pReq);
         cb(status);
       });
     }
@@ -146,9 +170,11 @@ namespace uvpp
     UVPP_DECL_CMETHOD(getWriteQueueSize, stream_get_write_queue_size)
 
   private:
+    ObjPool<uv_shutdown_t> shutdownPool;
     ShutdownCb shutdownCb;
     ConnectionCb connectionCb;
-    std::unordered_map<uv_write_t *, std::unique_ptr<WriteReq>> writeReqs;
+    ObjPool<WriteReq> writePool;
+    std::unordered_map<uv_write_t *, WriteReq *> writeReqs;
     std::vector<char> readBuf;
     ReadCb readCb;
   };
