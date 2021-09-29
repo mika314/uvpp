@@ -7,7 +7,6 @@
 
 namespace uvpp
 {
-
   template <typename T>
   class ObjPool
   {
@@ -150,12 +149,10 @@ namespace uvpp
       auto pReq = writePool.acquire();
       pReq->bufs = std::move(bufs);
       pReq->cb = std::move(cb);
-      writeReqs[&pReq->req] = pReq;
       uv_write(&pReq->req, get(), pReq->bufs.data(), pReq->bufs.size(), [](uv_write_t *req, int status) {
         auto self = static_cast<Stream *>(req->handle->data);
-        auto pReq = self->writeReqs[req];
+        auto pReq = reinterpret_cast<WriteReq *>(req);
         auto cb = std::move(pReq->cb);
-        self->writeReqs.erase(req);
         self->writePool.release(pReq);
         cb(status);
       });
@@ -174,7 +171,6 @@ namespace uvpp
     ShutdownCb shutdownCb;
     ConnectionCb connectionCb;
     ObjPool<WriteReq> writePool;
-    std::unordered_map<uv_write_t *, WriteReq *> writeReqs;
     std::vector<char> readBuf;
     ReadCb readCb;
   };
@@ -227,6 +223,33 @@ namespace uvpp
     CloseCb closeCb;
     uv_connect_t connectReq;
     ConnectCb connectCb;
+  };
+
+  class Timer : public Handle<uv_timer_t>
+  {
+  private:
+    auto get() { return &handle; }
+    auto get() const { return &handle; }
+
+  public:
+    Timer(class Loop &);
+
+    using Cb = std::function<auto()->void>;
+    auto start(Cb aCb, uint64_t timeout, uint64_t repeat)
+    {
+      cb = std::move(aCb);
+      return uv_timer_start(
+        &handle, [](uv_timer_t *handle) { static_cast<Timer *>(handle->data)->cb(); }, timeout, repeat);
+    }
+
+    UVPP_DECL_METHOD(stop, timer_stop);
+    UVPP_DECL_METHOD(again, timer_again);
+    UVPP_DECL_METHOD(setRepeat, timer_set_repeat);
+    UVPP_DECL_CMETHOD(getRepeat, timer_get_repeat);
+    UVPP_DECL_CMETHOD(getDueIn, timer_get_due_in);
+
+  private:
+    Cb cb;
   };
 
   class Loop

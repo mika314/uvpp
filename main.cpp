@@ -1,3 +1,4 @@
+#include "curlpp.hpp"
 #include "uvpp.hpp"
 #include <cstring>
 #include <log/log.hpp>
