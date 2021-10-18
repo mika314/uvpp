@@ -1,33 +1,27 @@
 #include "curlpp.hpp"
-#include "uvpp.hpp"
-#include <cstring>
-#include <log/log.hpp>
+#include "log/log.hpp"
 
 int main()
 {
   uvpp::Loop loop;
 
-  uvpp::Tcp tcp(loop);
-  sockaddr_in addr;
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(80);
-  inet_aton("185.199.110.153", &addr.sin_addr);
+  if (curl_global_init(CURL_GLOBAL_ALL))
+  {
+    fprintf(stderr, "Could not init curl\n");
+    return 1;
+  }
 
-  tcp.connect(reinterpret_cast<const struct sockaddr *>(&addr), [&tcp](int status) {
-    LOG("connect", status);
-    auto req = "GET / HTTP/1.1\n"
-               "HOST:mika.global\n\n";
-    uv_buf_t buf;
-    buf.base = const_cast<char *>(req);
-    buf.len = strlen(req);
-    tcp.write({buf}, [](int status) { LOG("write", status); });
-  });
-  tcp.readStart([](ssize_t nread, const uv_buf_t *buf) {
-    LOG("read", nread, buf->len, EOF);
-    if (nread <= 0)
-      return;
-    std::cout << std::string(buf->base, buf->base + nread);
-  });
+  curlpp::Multi multi(loop);
+  std::unique_ptr<curlpp::Easy> easy = std::make_unique<curlpp::Easy>();
+  easy->setUrl("https://mika.global");
+  easy->doneCb = [&easy, &multi]() {
+    LOG("done!");
+    easy = std::make_unique<curlpp::Easy>();
+    easy->setUrl("https://mika.global");
+    easy->doneCb = []() { LOG("2 done!"); };
+    multi.addHandle(*easy);
+  };
+  multi.addHandle(*easy);
+
   loop.run(UV_RUN_DEFAULT);
 }

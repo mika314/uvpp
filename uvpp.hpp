@@ -225,6 +225,29 @@ namespace uvpp
     ConnectCb connectCb;
   };
 
+  class Poll : public Stream<uv_poll_t>
+  {
+  private:
+    auto get() { return &handle; }
+    auto get() const { return &handle; }
+
+  public:
+    enum class Sock;
+    Poll(class Loop &, int fd);
+    Poll(class Loop &, uv_os_sock_t, Sock);
+
+    using Cb = std::function<auto(int status, int events)->void>;
+    auto start(int events, Cb aCb)
+    {
+      cb = std::move(aCb);
+      uv_poll_start(get(), events, [](uv_poll_t *handle, int status, int events) { static_cast<Poll *>(handle->data)->cb(status, events); });
+    }
+    UVPP_DECL_METHOD(stop, poll_stop);
+
+  private:
+    Cb cb;
+  };
+
   class Timer : public Handle<uv_timer_t>
   {
   private:
@@ -293,6 +316,24 @@ namespace uvpp
   Tcp::Tcp(Loop &loop, unsigned flags)
   {
     uv_tcp_init_ex(loop.get(), get(), flags);
+    setData(this);
+  }
+
+  Timer::Timer(class Loop &loop)
+  {
+    uv_timer_init(loop.get(), get());
+    setData(this);
+  }
+
+  Poll::Poll(Loop &loop, int fd)
+  {
+    uv_poll_init(loop.get(), get(), fd);
+    setData(this);
+  }
+
+  Poll::Poll(Loop &loop, uv_os_sock_t sock, Poll::Sock)
+  {
+    uv_poll_init_socket(loop.get(), get(), sock);
     setData(this);
   }
 
